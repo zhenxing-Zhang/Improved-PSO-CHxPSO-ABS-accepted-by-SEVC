@@ -1,0 +1,165 @@
+function[F]=CHCLPSO_ABS(OPTIM_DATA)
+%% PARAMETERS
+ 
+UB=OPTIM_DATA.UB; % Upper Bound
+LB=OPTIM_DATA.LB; % Low Bound
+Xmin =LB;
+Xmax =UB;
+RT=OPTIM_DATA.RT; % Monte Carlo trials
+ 
+ObjectiveFunction=OPTIM_DATA.ObjectiveFunction; % Objective function
+problem_size=size(LB,2);% Variable dimension
+dimension= problem_size;
+max_FES=OPTIM_DATA.MXFE_D*problem_size; % Maximum number of function evaluations
+ 
+num_g= problem_size+10; % Particle size
+ps=num_g;
+ 
+for run = 1:RT
+rand('state',sum(100*clock)); % Random seed
+ 
+max_iteration =  ceil(max_FES/ps);% Maximum number of iterations
+ 
+t=0:1/(ps-1):1;t=10.*t;
+Pc=0.05+(0.5-0.05).*(exp(t)-exp(t(1)))./(exp(t(ps))-exp(t(1)));
+%% Initialization start
+v_min=-0.2*(repmat(UB,ps,1)-repmat(LB,ps,1)).*ones(ps,dimension);
+v_max=-v_min;
+pos1=repmat(LB,ps,1)+(repmat(UB,ps,1)-repmat(LB,ps,1)).*rand(ps,dimension);
+pos2=pos1;
+vel1=v_min+(v_max-v_min).*rand(ps,dimension);
+vel2=vel1;
+%% Initialization finish
+k=1;
+fitcount=0;
+result=zeros(1,ps);
+for i=1:ps
+     [OUTPUT]=ObjectiveFunction(pos1(i,:));
+     result(i) = OUTPUT.PENALISED;
+    fitcount=fitcount+1;
+end
+[gbest_val,g_index]=min(result);
+result_all(1:ps)=gbest_val*ones(1,ps);
+gbest_pos=pos1(g_index,:);
+ 
+pbest_pos=pos1;
+pbest_val=result;
+obj_func_slope=zeros(ps,1);
+fri_best=(1:ps)'*ones(1,dimension);
+num_g1=ps;
+ 
+for i=1:num_g1 % Updateding examplers for; group 1
+    fri_best(i,:)=i*ones(1,dimension);
+    friend1=ceil(num_g1*rand(1,dimension));
+    friend2=ceil(num_g1*rand(1,dimension));
+    friend=(pbest_val(friend1)<pbest_val(friend2)).*friend1+(pbest_val(friend1)>=pbest_val(friend2)).*friend2;
+    fri_best(i,:)=i*ones(1,dimension);
+    toss=ceil(rand(1,dimension)-Pc(:,i)');
+    if toss==ones(1,dimension)
+        temp_index=randperm(dimension);
+        toss(1,temp_index(1))=0;
+        clear temp_index;
+    end
+    fri_best(i,:)=(1-toss).*friend+toss.*fri_best(i,:);
+    for d=1:dimension
+        fri_best_pos(i,d)=pbest_pos(fri_best(i,d),d);
+    end
+    toss_all(i,:)=toss;
+end
+ 
+M = 6;
+alpha_Ei = zeros(ps,1);
+alpha_Er = zeros(ps,1);
+beta = zeros(ps,1);
+while k<=max_iteration && fitcount<max_FES
+    k=k+1;
+ 
+    c=3-(k)*1.5/max_iteration;% Acceleration Coefficients
+    c1=2.5-(k)*2/max_iteration;% Acceleration Coefficients;
+    Weight =0.99-(k)*0.79/max_iteration; % Inertia Weight
+ 
+    for i=1:ps
+                M_Ei=ceil(M*(1-fitcount/max_FES));
+                M_Er = round(M*(fitcount/max_FES));
+        %% ��ʼ----process 1------%%
+        if  (alpha_Ei(i)>M_Ei)||(beta(i)~=0&&alpha_Er(i)>M_Er)
+            beta(i)=0;
+            alpha_Ei(i) = 0;
+            alpha_Er(i) = 0;
+            fri_best(i,:)=i*ones(1,dimension);
+            friend1=ceil(num_g1*rand(1,dimension));
+            friend2=ceil(num_g1*rand(1,dimension));
+            friend=(pbest_val(friend1)<pbest_val(friend2)).*friend1+(pbest_val(friend1)>=pbest_val(friend2)).*friend2;
+            fri_best(i,:)=i*ones(1,dimension);
+            toss=ceil(rand(1,dimension)-Pc(:,i)');
+            if toss==ones(1,dimension)
+                temp_index=randperm(dimension);
+                toss(1,temp_index(1))=0;
+                clear temp_index;
+            end
+            fri_best(i,:)=(1-toss).*friend+toss.*fri_best(i,:);
+            for d=1:dimension
+                fri_best_pos(i,d)=pbest_pos(fri_best(i,d),d);
+            end
+        end
+        if alpha_Er(i)<=M_Er
+            delta_g1=(c.*rand(1,dimension).*(fri_best_pos(i,:)-pos1(i,:)));
+            vel1(i,:)=Weight*vel1(i,:)+delta_g1;
+            vel1(i,:)=((vel1(i,:)<v_min(i,:)).*v_min(i,:))+((vel1(i,:)>v_max(i,:)).*v_max(i,:))+...
+                (((vel1(i,:)<v_max(i,:))&(vel1(i,:)>v_min(i,:))).*vel1(i,:));
+            pos1(i,:)=pos1(i,:)+vel1(i,:);
+            if (sum(pos1(i,:)>Xmax)+sum(pos1(i,:)<Xmin))==0
+                     [OUTPUT]=ObjectiveFunction(pos1(i,:));
+     result(i) = OUTPUT.PENALISED;
+    fitcount=fitcount+1;
+                fitcount =fitcount+1;
+                if  result(i)<pbest_val(i) % update pbest value and position
+                    beta(i) = beta(i)+1;
+                    pbest_pos(i,:)=pos1(i,:);
+                    pbest_val(i)=result(i);
+                     alpha_Er(i)=0;
+                else
+                    alpha_Er(i)=alpha_Er(i)+1;
+                end
+                if  pbest_val(i)<gbest_val % update gbest value and postion
+                    gbest_pos=pbest_pos(i,:);
+                    gbest_val=pbest_val(i);
+                end
+                result_all(fitcount)=gbest_val;
+            end
+            %% ��ʼ----process 2------%%
+        elseif (beta(i)==0&&(alpha_Er(i)>M_Er))&&(alpha_Ei(i)<=M_Ei)
+            delta_g1=c1.*rand(1,dimension).*(0.5*(fri_best_pos(i,:)+gbest_pos)-pos2(i,:));
+            vel2(i,:)=Weight*vel2(i,:)+delta_g1;
+            vel2(i,:)=((vel2(i,:)<v_min(i,:)).*v_min(i,:))+((vel2(i,:)>v_max(i,:)).*v_max(i,:))+...
+                (((vel2(i,:)<v_max(i,:))&(vel2(i,:)>v_min(i,:))).*vel2(i,:));
+            pos2(i,:)=pos2(i,:)+vel2(i,:);
+            if (sum(pos2(i,:)>Xmax)+sum(pos2(i,:)<Xmin))==0
+                     [OUTPUT]=ObjectiveFunction(pos2(i,:));
+     result(i) = OUTPUT.PENALISED;
+                fitcount =fitcount+1;
+                if  result(i)<pbest_val(i)
+                    pbest_pos(i,:)=pos2(i,:);
+                    pbest_val(i)=result(i);
+                else
+                    alpha_Ei(i)=alpha_Ei(i)+1;
+                end
+                if  pbest_val(i)<gbest_val % update gbest value and postion
+                    gbest_pos=pbest_pos(i,:);
+                    gbest_val=pbest_val(i);
+                    alpha_Ei(i)=0;
+                end
+                result_all(fitcount)=gbest_val;
+            end
+        end
+    end
+    if (k==max_iteration)&&(fitcount<max_FES)
+        k=k-1;
+    end
+end
+F(run) =result_all(max_FES);
+FF(1) = mean(F);
+FF(2) = std(F);
+end
+end
+ 
